@@ -1,0 +1,135 @@
+name: Build and Release
+
+on:
+  push:
+    branches: [ "main" ]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    name: Build on ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      matrix:
+        os: [windows-latest, ubuntu-latest]
+
+    steps:
+    - uses: actions/checkout@v4
+      with:
+        fetch-depth: 0  # Necessary for counting commits for versioning
+
+    - name: Set Version Number
+      id: version
+      shell: bash
+      run: |
+        # Calculate version based on commit count to ensure it increments automatically
+        # Base version 0.01 + number of commits.
+        COMMIT_COUNT=$(git rev-list --count HEAD)
+        VERSION="0.01.$COMMIT_COUNT"
+        echo "Calculated Version: $VERSION"
+        echo "VERSION=$VERSION" >> $GITHUB_ENV
+        echo "version=$VERSION" >> $GITHUB_OUTPUT
+
+    - name: Set up Python
+      uses: actions/setup-python@v4
+      with:
+        python-version: "3.10"
+
+    - name: Install Dependencies
+      run: |
+        pip install -r requirements.txt
+
+    # --- Windows Build Step ---
+    - name: Build EXE (Windows)
+      if: runner.os == 'Windows'
+      run: |
+        python build.py
+        # Rename to include version
+        cd dist
+        mv GeineiUploader.exe GeineiUploader_v${{ env.VERSION }}.exe
+
+    # --- Linux Build Step ---
+    - name: Build Binary (Linux)
+      if: runner.os == 'Linux'
+      run: |
+        # Ensure binutils is present (sometimes needed for pyinstaller on linux runners)
+        sudo apt-get update && sudo apt-get install -y binutils
+        python build.py
+        mv dist/GeineiUploader dist/geinei-uploader
+
+    - name: Build DEB Package (Linux)
+      if: runner.os == 'Linux'
+      run: |
+        # Structure for DEB
+        mkdir -p deb_dist/geinei-uploader/usr/local/bin
+        mkdir -p deb_dist/geinei-uploader/DEBIAN
+        
+        # Copy binary
+        cp dist/geinei-uploader deb_dist/geinei-uploader/usr/local/bin/
+        chmod 755 deb_dist/geinei-uploader/usr/local/bin/geinei-uploader
+        
+        # Create Control File
+        cat <<EOF > deb_dist/geinei-uploader/DEBIAN/control
+        Package: geinei-uploader
+        Version: ${{ env.VERSION }}
+        Architecture: amd64
+        Maintainer: AMDHelper <admin@example.com>
+        Description: Auto Git Uploader for Geinei Site
+         A simple GUI tool to upload files to the Geinei repository.
+        EOF
+        
+        # Build DEB
+        dpkg-deb --build deb_dist/geinei-uploader
+        
+        # Move to dist for upload
+        mv deb_dist/geinei-uploader.deb dist/GeineiUploader_v${{ env.VERSION }}_amd64.deb
+
+    # --- Upload Artifacts (Temporary for Release Step) ---
+    - name: Upload Build Artifacts
+      uses: actions/upload-artifact@v4
+      with:
+        name: build-${{ matrix.os }}
+        path: dist/*
+        retention-days: 1
+        if-no-files-found: error
+
+  release:
+    name: Create Release
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+    - name: Download Windows Artifacts
+      uses: actions/download-artifact@v4
+      with:
+        name: build-windows-latest
+        path: ./assets
+
+    - name: Download Linux Artifacts
+      uses: actions/download-artifact@v4
+      with:
+        name: build-ubuntu-latest
+        path: ./assets
+
+    - name: Get Version
+      id: version
+      run: |
+        # Extract version from one of the filenames
+        FILENAME=$(ls ./assets/*.exe | head -n 1)
+        # Grep version like 0.01.123
+        VER=$(echo $FILENAME | grep -oP 'v\K[0-9.]+')
+        echo "VERSION=$VER" >> $GITHUB_ENV
+
+    - name: Create GitHub Release
+      uses: softprops/action-gh-release@v1
+      with:
+        tag_name: v${{ env.VERSION }}
+        name: Release v${{ env.VERSION }}
+        draft: false
+        prerelease: false
+        files: |
+          ./assets/*.exe
+          ./assets/*.deb
+        token: ${{ secrets.GITHUB_TOKEN }}
