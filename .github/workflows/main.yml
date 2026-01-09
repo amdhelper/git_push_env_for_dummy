@@ -41,51 +41,17 @@ jobs:
     - name: Install Dependencies
       run: |
         pip install -r requirements.txt
+        if [ "${{ runner.os }}" == "Linux" ]; then
+          sudo apt-get update && sudo apt-get install -y binutils python3-tk
+        fi
 
-    # --- Windows Build Step ---
-    - name: Build EXE (Windows)
+    - name: Build App
+      run: python build.py
+
+    - name: Rename Windows EXE
       if: runner.os == 'Windows'
-      run: |
-        python build.py
-        # Rename to include version
-        cd dist
-        mv GeineiUploader.exe GeineiUploader_v${{ env.VERSION }}.exe
-
-    # --- Linux Build Step ---
-    - name: Build Binary (Linux)
-      if: runner.os == 'Linux'
-      run: |
-        # Ensure binutils is present (sometimes needed for pyinstaller on linux runners)
-        sudo apt-get update && sudo apt-get install -y binutils
-        python build.py
-        mv dist/GeineiUploader dist/geinei-uploader
-
-    - name: Build DEB Package (Linux)
-      if: runner.os == 'Linux'
-      run: |
-        # Structure for DEB
-        mkdir -p deb_dist/geinei-uploader/usr/local/bin
-        mkdir -p deb_dist/geinei-uploader/DEBIAN
-        
-        # Copy binary
-        cp dist/geinei-uploader deb_dist/geinei-uploader/usr/local/bin/
-        chmod 755 deb_dist/geinei-uploader/usr/local/bin/geinei-uploader
-        
-        # Create Control File
-        cat <<EOF > deb_dist/geinei-uploader/DEBIAN/control
-        Package: geinei-uploader
-        Version: ${{ env.VERSION }}
-        Architecture: amd64
-        Maintainer: AMDHelper <admin@example.com>
-        Description: Auto Git Uploader for Geinei Site
-         A simple GUI tool to upload files to the Geinei repository.
-        EOF
-        
-        # Build DEB
-        dpkg-deb --build deb_dist/geinei-uploader
-        
-        # Move to dist for upload
-        mv deb_dist/geinei-uploader.deb dist/GeineiUploader_v${{ env.VERSION }}_amd64.deb
+      shell: bash
+      run: mv dist/GeineiUploader.exe dist/GeineiUploader_v${{ env.VERSION }}.exe
 
     # --- Upload Artifacts (Temporary for Release Step) ---
     - name: Upload Build Artifacts
